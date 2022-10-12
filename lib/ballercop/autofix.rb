@@ -3,68 +3,64 @@ require 'active_support/core_ext/string/filters'
 require 'rugged'
 require 'rubocop'
 require 'securerandom'
+require 'pry'
+
+require_relative 'patch'
+require_relative 'logger'
 
 module Ballercop
   class Autofix
-    def initialize(verbose: false)
+    def initialize(verbose: false, repo: nil)
       @verbose = verbose
-      @temp_info_path = "tmp/#{SecureRandom.uuid}.txt"
+      @repo = repo
+      @logger = Logger.new(verbose)
     end
 
     def run(unstaged = false)
       ensure_working_dir
 
-      repo = Rugged::Repository.new(@dev_mode ? '../' : '.')
-      unstaged = unstaged ? repo.index.diff : nil
-      # unstaged = nil # Note: not supporting unstaged files for now
+      repo = Rugged::Repository.new(@repo ? @repo : '.')
       staged = repo.head.target.diff(repo.index)
+      unstaged = unstaged ? repo.index.diff : nil
 
-      print "Starting ..."
+      log "Starting ..."
+
       [staged, unstaged].compact.each do |patches|
         patches.each_patch do |patch|
-          file_path = patch.delta.new_file[:path]
-          next unless ruby_file?(file_path) && offensive?(file_path, patch)
-          print "Errors detected in #{file_path}. Auto fixing ..."
-
-          if patch.delta.status == :added
-            rubocop_fix(corrected_file_path(file_path)) and next
-          end
-
-          if patch.delta.status == :modified
-            lint_patch(patch, file_path)
-          end
+          parse_patch(patch)
         rescue StandardError => e
-          print "#{e.message}, #{e.backtrace}"
-        ensure
-          clean_up
+          log "#{e.message}, #{e.backtrace}"
         end
       end
-      print "Done!"
+
+      log "Done!"
     end
     
     private
 
-    def print(message)
-      return unless @verbose
-      p "BALLERCOP: #{message}"
+    def parse_patch(patch)
+      file_path = patch.delta.new_file[:path]
+      _patch = Patch.new(patch, corrected_file_path(file_path), @logger)
+
+      return unless ruby_file?(corrected_file_path(file_path)) 
+      
+      log "No errors 🎉 in #{file_path}" and return unless  _patch.offensive?
+
+      log "Errors detected in #{file_path}. Auto fixing ..."
+
+      fix_entire_file(corrected_file_path(file_path)) and return if patch.delta.status == :added
+      _patch.fix if patch.delta.status == :modified
     end
-
-    def offensive?(file_path, patch)
-      file_path = corrected_file_path(file_path)
-      registry = RuboCop::Cop::Registry.new(RuboCop::Cop::Cop.all)
-      config = RuboCop::ConfigStore.new.for(file_path)
-      processed_source = RuboCop::ProcessedSource.from_file(file_path, config.target_ruby_version)
-      team = RuboCop::Cop::Team.new(registry, config)
-      added_lines = []
-      patch.each_hunk do |hunk|
-        added_lines.concat(hunk.lines.select(&:addition?).map(&:new_lineno))
-      end
-
-      team
-        .inspect_file(processed_source)
-        .sort
-        .reject(&:disabled?)
-        .any? { |offense| added_lines.include? offense.line }
+    
+    def fix_entire_file(file_path)
+      output_file = "tmp/#{SecureRandom.uuid}.txt"
+      RuboCop::CLI.new.run(['-a', file_path, "-o#{output_file}"])
+      print_uncorrected(file_path.split('/').last, output_file)
+      File.delete(output_file)
+    end
+    
+    def log(message)
+      @logger.log message
     end
 
     def ruby_file?(path)
@@ -94,95 +90,28 @@ module Ballercop
       false
     end
 
-    def lint_patch(patch, file_path)
-      file_path = corrected_file_path(file_path)
-      parsed_hunks = 1
-      temp_file_path = "tmp/#{SecureRandom.uuid}.rb"
-      FileUtils.touch(temp_file_path)
-      original_content = []
-      File.foreach(file_path) { |line| original_content.append(line) }
-      last_line_processed = 0
-
-      patch.hunks.each do |hunk|
-        print "PARSING HUNK #{parsed_hunks}/#{patch.hunk_count} ..."
-
-        first_addition = hunk.lines.find {|line| line.addition? }
-        next unless first_addition.present?
-
-        first_line = first_addition.new_lineno
-        last_addition = hunk.lines.reverse.find {|line| line.addition? }
-        last_line = last_addition.new_lineno
-        temp_file_content = []
-
-        hunk.each_line do |line|
-          next unless line.new_lineno >= first_line && line.new_lineno <= last_line
-          temp_file_content.append(line.content)
-        end
-
-        temp_lint_path = "tmp/#{SecureRandom.uuid}.rb"
-        File.write(temp_lint_path, temp_file_content.join, mode: "w")
-        rubocop_fix(temp_lint_path)
-
-        linted_content = []
-        temp_content = []
-        File.foreach(temp_lint_path) { |line| linted_content.append(line) }
-        File.foreach(temp_file_path) { |line| temp_content.append(line) }
-
-        unhunk = last_line_processed < first_line ? original_content[last_line_processed...first_line - 1] : []
-        last_line_processed = last_line + 1
-
-        File.write(temp_file_path, (temp_content + unhunk + linted_content).join, mode: "w")
-        File.delete(temp_lint_path)
-
-        parsed_hunks += 1
-      end
-
-      parsed_content = []
-      File.foreach(temp_file_path) { |line| parsed_content.append(line) }
-
-      unparsed_content = []
-      File.foreach(file_path) do |line|
-        next if $. < last_line_processed
-        unparsed_content.append(line)
-      end
-
-      File.write(file_path, (parsed_content + unparsed_content).join, mode: "w")
-      File.delete(temp_file_path)
-    end
-
-    def print_uncorrected(file_name)
-      return unless File.exist?(@temp_info_path)
+    def print_uncorrected(file_name, output_file)
+      return unless File.exist?(output_file)
       output = []
-      File.foreach(@temp_info_path) { |line| output.append(line) }
+      File.foreach(output_file) { |line| output.append(line) }
 
       message = output.compact.reject do |line|
         line.squish.blank? || (!file_name.include?('tmp') && !line.include?(file_name)) || line.include?("[Corrected]")
       end
 
-      print message.map(&:squish).join if message.present?
+      log message.map(&:squish).join if message.present?
     end
 
-    def clean_up
-      File.delete(@temp_info_path) if File.exist?(@temp_info_path)
-    end
-    
     def ensure_working_dir
       wd = Dir.pwd.split('/').last
-      if wd == 'ballercop'
-        @dev_mode = true
-      elsif wd != 'baller'
-        print "ERROR -- Not in Baller root dir" and return
-      end
+      return unless wd == 'ballercop'
+      return unless @repo.blank?
+      raise StandardError.new("ERROR -- Must run outside of gem. Try --repo=[path_to_repo]")
     end
     
     def corrected_file_path(path)
-      return '../' + path if @dev_mode
+      return @repo + path if @repo
       path
-    end
-    
-    def rubocop_fix(file_path)
-      RuboCop::CLI.new.run(['-a', file_path, "-o#{@temp_info_path}"])
-      print_uncorrected(file_path.split('/').last)
     end
   end
 end

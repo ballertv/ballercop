@@ -27,8 +27,9 @@ there are any Rubocop offences with each file, and attempts to fix each offence.
 
 #### Options
 
-- Verbose [false]: Show messages from the cop. `ballercop fix --verbose`. "-v" shorthand
-- Unstaged [false]: Check unstaged files too. `ballercop fix --unstaged`, "-u" shorthand
+- Verbose [false]: Show messages from the cop. `ballercop fix --verbose`. "-v"
+- Unstaged [false]: Check unstaged files too. `ballercop fix --unstaged`. "-u"
+- Repo [nil]: Relative path to repo to apply fixes on. If not specified, command is applied on current directory. `ballercop fix --repo="../baller""`. "-r"
 
 ## Development
 

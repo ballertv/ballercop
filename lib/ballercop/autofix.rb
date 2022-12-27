@@ -10,30 +10,41 @@ require_relative 'logger'
 
 module Ballercop
   class Autofix
-    def initialize(verbose: false, repo: nil)
-      @verbose = verbose
+    MAX_RUNS = 2
+
+    def initialize(log: false, log_level: nil, repo: nil)
+      @log = log
       @repo = repo
-      @logger = Logger.new(verbose)
+      @logger = Logger.new(log_level&.to_sym) if log
     end
 
     def run(unstaged = false)
       ensure_working_dir
 
-      repo = Rugged::Repository.new(@repo ? @repo : '.')
-      staged = repo.head.target.diff(repo.index)
-      unstaged = unstaged ? repo.index.diff : nil
+      runs = 1
+      keep_running = true
 
-      log "Starting ..."
+      log "Starting ...", :info
 
-      [staged, unstaged].compact.each do |patches|
-        patches.each_patch do |patch|
-          parse_patch(patch)
-        rescue StandardError => e
-          log "#{e.message}, #{e.backtrace}"
+      until runs > MAX_RUNS || !keep_running
+        repo = Rugged::Repository.new(@repo ? @repo : '.')
+        staged = !unstaged ? repo.head.target.diff(repo.index) : nil
+        unstaged = repo.index.diff
+        runs += 1
+        keep_running = false
+  
+        [staged, unstaged].compact.each do |patches|
+          patches.each_patch do |patch|
+            did_apply_fixes = parse_patch(patch)
+            # In some cases when fixes are applied, the fixes break new rule(s) so rerun
+            keep_running = true if did_apply_fixes
+          rescue StandardError => e
+            log "#{e.message}, #{e.backtrace}", :error
+          end
         end
       end
 
-      log "Done!"
+      log "Done!", :info
     end
     
     private
@@ -44,12 +55,22 @@ module Ballercop
 
       return unless ruby_file?(corrected_file_path(file_path)) 
       
-      log "No errors 🎉 in #{file_path}" and return unless  _patch.offensive?
+      unless  _patch.offensive?
+        log "No errors 🎉 in #{file_path}", :info
+        return false
+      end
 
-      log "Errors detected in #{file_path}. Auto fixing ..."
+      log "Errors detected in #{file_path}. Auto fixing ...", :warning
 
-      fix_entire_file(corrected_file_path(file_path)) and return if patch.delta.status == :added
-      _patch.fix if patch.delta.status == :modified
+      if patch.delta.status == :added
+        fix_entire_file(corrected_file_path(file_path))
+      end
+
+      if patch.delta.status == :modified
+        _patch.fix
+      end
+
+      true
     end
     
     def fix_entire_file(file_path)
@@ -59,8 +80,8 @@ module Ballercop
       File.delete(output_file)
     end
     
-    def log(message)
-      @logger.log message
+    def log(message, log_level)
+      @logger&.log message, Logger::LOG_LEVELS[log_level]
     end
 
     def ruby_file?(path)
@@ -99,7 +120,7 @@ module Ballercop
         line.squish.blank? || (!file_name.include?('tmp') && !line.include?(file_name)) || line.include?("[Corrected]")
       end
 
-      log message.map(&:squish).join if message.present?
+      log message.map(&:squish).join, :warning if message.present?
     end
 
     def ensure_working_dir

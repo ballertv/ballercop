@@ -5,7 +5,7 @@ module Ballercop
     def initialize(patch, file_path, logger)
       @patch = patch
       @file_path = file_path
-      @logger = logger || Logger.new(true)
+      @logger = logger || Logger.new(:warning)
     end
     
     def fix
@@ -17,7 +17,7 @@ module Ballercop
       end
 
       unfixable_offenses.each do |each_offense|
-        @logger.log "Can not fix #{each_offense.message} at line #{each_offense.line}"
+        @logger.log "Can not fix #{each_offense.message} at line #{each_offense.line}", :warning
       end
     end
     

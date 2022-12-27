@@ -31,9 +31,9 @@ Gem::Specification.new do |spec|
   spec.add_dependency "rubocop", '~> 1.32'
   spec.add_dependency "securerandom"
   spec.add_dependency "thor"
-  spec.add_dependency "pry"
-  spec.add_dependency 'byebug'
-  spec.add_dependency 'pry-byebug'
+  spec.add_development_dependency "pry"
+  spec.add_development_dependency 'byebug'
+  spec.add_development_dependency 'pry-byebug'
   spec.add_development_dependency "rspec", "~> 3.2"
   spec.add_development_dependency "cucumber"
   spec.add_development_dependency "aruba"

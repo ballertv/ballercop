@@ -17,7 +17,7 @@ module Ballercop
       end
 
       unfixable_offenses.each do |each_offense|
-        @logger.log "Can not fix #{each_offense.message} at line #{each_offense.line}", :warning
+        @logger.log "Can not fix #{each_offense.message} at line #{each_offense.line}", Logger::LOG_LEVELS[:warning]
       end
     end
     

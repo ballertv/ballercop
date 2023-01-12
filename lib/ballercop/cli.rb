@@ -4,17 +4,23 @@ require 'ballercop'
 module Ballercop
   class CLI < Thor
     
-    desc "fix", "Safely fixes rubocop issues for staged, changed files"
-    option :log, aliases: '-l', type: :boolean, desc: "Log messages at specified log level"
-    option :log_level, type: :string, desc: "Log level. Default: info. [info, warning, error]"
+    desc "fix", "Safely fixes rubocop issues for changed files between provided base branch or 'origin/testflight' by default"
+    option :silent, type: :boolean, desc: "Silent log messages"
+    option :base, aliases: '-b', desc: "Specify base branch"
     option :unstaged, aliases: '-u', type: :boolean, desc: "Check unstaged changed files only"
-    option :repo, aliases: '-r', type: :string, desc: "Relative path to repo to apply fixes on. If not specified, command is applied on current directory"
+    option :staged, aliases: '-s', type: :boolean, desc: "Check staged changed files only"
+    option :path, aliases: '-p', type: :string, desc: "Relative path to repo to apply fixes on. If not specified, command is applied on current directory"
+    option :files, aliases: '-f', type: :array, desc: "Fix only, space separated, specified file(s). Path to file(s) from repo's root. Note: only files changed, committed or uncommitted, in current branch will be picked up"
     def fix
       Autofix.new(
-        log: options[:log],
-        log_level: options[:log_level],
-        repo: options[:repo],
-      ).run(options[:unstaged])
+        silent: options[:silent],
+        path: options[:path],
+      ).run(
+        unstaged: options[:unstaged],
+        staged: options[:staged],
+        base: options[:base],
+        target_files: options[:files]
+      )
     end
   end
 end

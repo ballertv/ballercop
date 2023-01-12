@@ -12,78 +12,75 @@ module Ballercop
   class Autofix
     MAX_RUNS = 2
 
-    def initialize(log: false, log_level: nil, repo: nil)
-      @log = log
-      @repo = repo
-      @logger = Logger.new(log_level&.to_sym) if log
+    def initialize(silent: false, path: nil)
+      @path = path.presence || '.'
+      @logger = Logger.new unless silent.present?
     end
 
-    def run(unstaged = false)
+    def run(unstaged: false, staged: false, base: nil, target_files: nil)
       ensure_working_dir
 
       runs = 1
       keep_running = true
-
-      log "Starting ...", :info
+      rerun_files = []
+      all_patches = {}
 
       until runs > MAX_RUNS || !keep_running
-        repo = Rugged::Repository.new(@repo ? @repo : '.')
-        staged = !unstaged ? repo.head.target.diff(repo.index) : nil
-        unstaged = repo.index.diff
-        runs += 1
+        @logger&.log "\n———————— Second attempt ————————\n\n", :info if runs != 1
+        
+        patches = get_patches(unstaged, staged, base, runs == 1 ? target_files : rerun_files)
         keep_running = false
-  
-        [staged, unstaged].compact.each do |patches|
-          patches.each_patch do |patch|
-            did_apply_fixes = parse_patch(patch)
-            # In some cases when fixes are applied, the fixes break new rule(s) so rerun
-            keep_running = true if did_apply_fixes
-          rescue StandardError => e
-            log "#{e.message}, #{e.backtrace}", :error
+        runs += 1
+
+        patches.each do |patch|
+          @logger&.log "Inspecting #{patch.file_path}", :info
+          all_patches[patch.file_path] = patch
+          patch.fix
+          if patch.fixes_applied # In some cases when fixes are applied, the fixes break new rule(s) so rerun
+            keep_running = true
+            rerun_files.append(patch.file_path)
           end
         end
       end
 
-      log "Done!", :info
+      log_result(all_patches.values)
+
+      exit(0)
+    rescue StandardError => e
+      @logger&.log "#{e.message}, #{e.backtrace}", :error
+      exit(1)
     end
     
     private
 
-    def parse_patch(patch)
-      file_path = patch.delta.new_file[:path]
-      _patch = Patch.new(patch, corrected_file_path(file_path), @logger)
+    def get_patches(unstaged, staged, base, target_files)
+      repo = Rugged::Repository.new(@path)
+      head = repo.head.target
 
-      return unless ruby_file?(corrected_file_path(file_path)) 
+      patches = []
+
+      if !unstaged && !staged
+        merge_base = repo.merge_base(base || 'origin/testflight', head)
+        repo.diff(merge_base, head, nil).each {|p| patches.append(p) }
+      end
+
+      if unstaged || staged || target_files.present?
+        head.diff(repo.index).each { |p| patches.append(p) } if staged || target_files.present?
+        repo.index.diff.each { |p| patches.append(p) } if unstaged || target_files.present?
+      end
       
-      unless  _patch.offensive?
-        log "No errors 🎉 in #{file_path}", :info
-        return false
-      end
+      added_files = []
+      patches.map do |patch|
+        file_path = patch.delta.new_file[:path]
+        next if added_files.include?(file_path)
+        next unless ruby_file?(corrected_file_path(file_path))
+        next if target_files.present? && !target_files.include?(file_path)
 
-      log "Errors detected in #{file_path}. Auto fixing ...", :warning
-
-      if patch.delta.status == :added
-        fix_entire_file(corrected_file_path(file_path))
-      end
-
-      if patch.delta.status == :modified
-        _patch.fix
-      end
-
-      true
+        added_files.append(file_path)
+        Patch.new(patch, file_path, corrected_file_path(file_path))
+      end.compact
     end
     
-    def fix_entire_file(file_path)
-      output_file = "tmp/#{SecureRandom.uuid}.txt"
-      RuboCop::CLI.new.run(['-a', file_path, "-o#{output_file}"])
-      print_uncorrected(file_path.split('/').last, output_file)
-      File.delete(output_file)
-    end
-    
-    def log(message, log_level)
-      @logger&.log message, Logger::LOG_LEVELS[log_level]
-    end
-
     def ruby_file?(path)
       rb_file?(path) ||
         rake_file?(path) ||
@@ -111,28 +108,24 @@ module Ballercop
       false
     end
 
-    def print_uncorrected(file_name, output_file)
-      return unless File.exist?(output_file)
-      output = []
-      File.foreach(output_file) { |line| output.append(line) }
-
-      message = output.compact.reject do |line|
-        line.squish.blank? || (!file_name.include?('tmp') && !line.include?(file_name)) || line.include?("[Corrected]")
-      end
-
-      log message.map(&:squish).join, :warning if message.present?
-    end
-
     def ensure_working_dir
       wd = Dir.pwd.split('/').last
       return unless wd == 'ballercop'
-      return unless @repo.blank?
-      raise StandardError.new("ERROR -- Must run outside of gem. Try --repo=[path_to_repo]")
+      return unless @path.blank?
+      raise StandardError.new("ERROR -- Must run outside of gem. Try --path=[path_to_repo]")
     end
     
     def corrected_file_path(path)
-      return @repo + path if @repo
+      return @path.end_with?('/') ? @path + path : @path + '/' + path if @path
       path
+    end
+
+    def log_result(patches)
+      return unless patches.present?
+
+      logger = @logger || Logger.new(:error)
+      logger&.log "\nResult:", :info
+      patches.each { |patch| patch.result_log(logger) }
     end
   end
 end

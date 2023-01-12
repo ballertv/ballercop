@@ -27,10 +27,33 @@ there are any Rubocop offences with each file, and attempts to fix each offence.
 
 #### Options
 
-- log [false]: Log messages at specified log level. `ballercop fix --log`. "-l"
-- log_level [nil]: Log level. [info, warning, error] Default: info. `ballercop fix --log --log_level=warning`
-- Unstaged [false]: Check unstaged files **only**. `ballercop fix --unstaged`. "-u"
-- Repo [nil]: Relative path to repo to apply fixes on. If not specified, command is applied on current directory. `ballercop fix --repo="../baller""`. "-r"
+| Command flag    | Description                                                                                                                              |
+|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------|
+| `--silent`      | Silent log messages. Result will still be shown                                                                                          |
+| `-b/--base`     | Specify base branch to analyze against. Default: origin/testflight                                                                       |
+| `-u/--unstaged` | Analyze changes in unstaged files                                                                                                        |
+| `-s/--staged`   | Analyze changes in staged files                                                                                                          |
+| `-p/--path`     | Run in specified. Path must be git repo, i.e. path's directory has .git/                                                                 |
+| `-f/--files`    | Analyze only specified file(s), space separated. Note: only files changed, committed or uncommitted, in current branch will be picked up |
+
+**Examples**
+```console
+# no logs
+ballercop fix --silent
+
+# base branch
+ballercop fix -b BBS-8220-epic
+ballercop fix -b origin/BBS-8220 -u
+ballercop fix -b origin/BBS-8220 -u -s
+
+# different repo
+ballercop fix -p ../workspace/baller
+ballercop fix -p ../workspace/baller -f app/controllers/registrations_controller.rb
+
+# specific files
+ballercop fix -f app/controllers/registrations_controller.rb
+ballercop fix -f app/controllers/registrations_controller.rb app/models/test_campaign.rb
+```
 
 ## Development
 

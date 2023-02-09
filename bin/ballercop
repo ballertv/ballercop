@@ -1,0 +1,3 @@
+#!/usr/bin/env ruby
+require 'ballercop/cli'
+Ballercop::CLI.start

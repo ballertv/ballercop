@@ -31,6 +31,8 @@ Gem::Specification.new do |spec|
   spec.add_dependency "rubocop", '~> 1.32'
   spec.add_dependency "securerandom"
   spec.add_dependency "thor"
+  spec.add_dependency "slack-notifier"
+  spec.add_dependency "platform-api"
   spec.add_development_dependency "pry"
   spec.add_development_dependency 'byebug'
   spec.add_development_dependency 'pry-byebug'

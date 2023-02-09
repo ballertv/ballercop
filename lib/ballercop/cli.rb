@@ -22,5 +22,11 @@ module Ballercop
         target_files: options[:files]
       )
     end
+    
+    desc "ci-check", "Check for violations during CI"
+    option :path, aliases: '-p', type: :string, desc: "Relative path to repo to apply fixes on. If not specified, command is applied on current directory"
+    def ci_check
+      Autofix.new(path: options[:path]).ci_check
+    end
   end
 end

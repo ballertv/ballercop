@@ -3,10 +3,11 @@ require "stringio"
 
 module Ballercop
   class Patch
-    def initialize(patch, file_path, relative_file_path)
+    def initialize(patch, file_path, relative_file_path, ci = false)
       @patch = patch
       @file_path = file_path
-      @relative_file_path = relative_file_path 
+      @relative_file_path = relative_file_path
+      @ci = ci
     end
     
     attr_reader :file_path, :fixes_applied, :relative_file_path
@@ -52,6 +53,17 @@ module Ballercop
       end
     end
 
+    def offenses(cache = false)
+      return @offenses if cache && @offenses.present?
+      added_lines = patch_added_lines
+      report = rubocop_report
+      @offenses = report.offenses.sort
+                        .reject(&:disabled?)
+                        .select {|offense| added_lines.include?(offense.line) }
+
+      @offenses
+    end
+
     private
 
     def fix_file
@@ -84,17 +96,6 @@ module Ballercop
       end
     end
 
-    def offenses(cache = false)
-      return @offenses if cache && @offenses.present?
-      added_lines = patch_added_lines(@patch)
-      report = rubocop_report
-      @offenses = report.offenses.sort
-            .reject(&:disabled?)
-            .select {|offense| added_lines.include?(offense.line) }
-      
-      @offenses
-    end
-
     def fixable_offenses
       offenses.reject {|offense| offense.corrector == nil || offense.status == :unsupported}
     end
@@ -103,10 +104,12 @@ module Ballercop
       offenses(true).select {|offense| offense.corrector == nil || offense.status == :unsupported}
     end
 
-    def patch_added_lines(patch)
+    def patch_added_lines
       added_lines = []
-      patch.each_hunk do |hunk|
-        added_lines.concat(hunk.lines.select(&:addition?).map(&:new_lineno))
+      @patch.each_hunk do |hunk|
+        @ci ?
+          added_lines.concat(hunk.lines.select(&:deletion?).map(&:old_lineno)) :
+          added_lines.concat(hunk.lines.select(&:addition?).map(&:new_lineno))
       end
       added_lines
     end
@@ -123,6 +126,5 @@ module Ballercop
         stream.reopen(on_hold[i])
       end
     end
-
   end
 end

@@ -4,6 +4,8 @@ require 'rugged'
 require 'rubocop'
 require 'securerandom'
 require 'pry'
+require 'slack-notifier'
+require 'platform-api'
 
 require_relative 'patch'
 require_relative 'logger'
@@ -15,6 +17,25 @@ module Ballercop
     def initialize(silent: false, path: nil)
       @path = path.presence || '.'
       @logger = Logger.new unless silent.present?
+    end
+
+    def ci_check
+      ensure_working_dir
+      
+      @heroku = PlatformAPI.connect_oauth(ENV['PLATFORM_API_TOKEN'])
+      env_vars = []
+      patches = ci_get_patches
+      patches.each do |patch|
+        @logger&.log "Inspecting #{patch.file_path}", :info
+        env_vars.concat(get_added_env_var(patch))
+      end
+
+      env_vars.uniq.map { |env_var| check_and_notify(env_var)}
+
+      exit(0)
+    rescue StandardError => e
+      @logger&.log "#{e.message}, #{e.backtrace}", :error
+      exit(1)
     end
 
     def run(unstaged: false, staged: false, base: nil, target_files: nil)
@@ -52,6 +73,63 @@ module Ballercop
     end
     
     private
+
+    def get_added_env_var(patch)
+      patch.offenses
+           .select {|offence| offence.cop_name.present? && offence.cop_name == 'CustomCops/EnvVarAccess'}
+           .map {|offence| offence.highlighted_area.source.gsub(/[\[\]"']/, '[': '', ']': '', '"': '', '\'': '')}
+    end
+
+    def check_and_notify(env_var)
+      apps_missing_in = []
+      
+      apps_missing_in.append('baller') if baller_env[env_var].blank?
+      apps_missing_in.append('ballersupport') if baller_support_env[env_var].blank?
+      apps_missing_in.append('ballertestflight') if baller_testflight_env[env_var].blank?
+      apps_missing_in.append('ballerstreaming') if baller_streaming_env[env_var].blank?
+      
+      notify(env_var, apps_missing_in) if apps_missing_in.present?
+    end
+
+    def notify(env_var, apps)
+      return unless ENV['BALLERCOP_SLACK_WEBHOOK_URL']
+      notifier = Slack::Notifier.new ENV['BALLERCOP_SLACK_WEBHOOK_URL'], channel: '#eng-env-var-added', name: 'Ballercop'
+      notifier.ping "🚨 #{env_var} merged to TF and missing in #{apps.join(', ')}\n<@U08DA5T9C> <@U0K2SLU1J> <@UN5QVTASJ>"
+    end
+
+    def baller_support_env
+      @baller_support_env ||= @heroku.config_var.info_for_app('ballersupport')
+    end
+    
+    def baller_testflight_env
+      @baller_testflight_env ||= @heroku.config_var.info_for_app('ballertestflight')
+    end
+    
+    def baller_env
+      @baller_env ||= @heroku.config_var.info_for_app('baller')
+    end
+    
+    def baller_streaming_env
+      @baller_streaming_env ||= @heroku.config_var.info_for_app('ballerstreaming')
+    end
+
+    def ci_get_patches
+      repo = Rugged::Repository.new(@path)
+      head = repo.head.target
+
+      added_files = []
+      
+      # Note: this flips lines added & deleted.
+      # Lines added show up in patch as line deleted which affects Patch#patch_added_lines
+      head.tree.diff(head.parents.first).map do |patch|
+        file_path = patch.delta.new_file[:path]
+        next if added_files.include?(file_path)
+        next unless ruby_file?(corrected_file_path(file_path))
+
+        added_files.append(file_path)
+        Patch.new(patch, file_path, corrected_file_path(file_path), true)
+      end.compact
+    end
 
     def get_patches(unstaged, staged, base, target_files)
       repo = Rugged::Repository.new(@path)

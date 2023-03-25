@@ -13,7 +13,7 @@ module Ballercop
     attr_reader :file_path, :fixes_applied, :relative_file_path
 
     def fix
-      unless offensive?
+      if @patch.delta.status == :deleted || !offensive? 
         @fixes_applied = false
         @no_violations = true
         return
@@ -87,12 +87,17 @@ module Ballercop
     def rubocop_team(config)
       @rubocop_team ||= RuboCop::Cop::Team.new(rubocop_registry, config)
     end
+    
+    def rubocop_config
+      @rubocop_config ||= RuboCop::ConfigStore.new.for_file(@relative_file_path)
+    end
 
     def rubocop_report
-      config = RuboCop::ConfigStore.new.for(@relative_file_path)
-      processed_source = RuboCop::ProcessedSource.from_file(@relative_file_path, config.target_ruby_version)
+      config = rubocop_config
+      absolute_file_path = config.base_dir_for_path_parameters + '/' + @file_path
+      processed_source = RuboCop::ProcessedSource.from_file(absolute_file_path, rubocop_config.target_ruby_version)
       silence_streams(STDERR) do
-        return rubocop_team(config).investigate(processed_source)
+        return rubocop_team(rubocop_config).investigate(processed_source)
       end
     end
 

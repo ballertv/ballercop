@@ -1,0 +1,46 @@
+name: Published Release
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Dump Github context
+      env:
+        GITHUB_CONTEXT: ${{ toJSON(github) }}
+      run: echo "$GITHUB_CONTEXT"
+    - name: Notify Slack Channel
+      uses: slackapi/slack-github-action@v1.24.0
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.APP_RELEASE_SLACK_NOTIFIER }}
+        SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+      with:
+        channel-id: "C03DQMTUT8F"
+        payload: |
+          {
+            "text": "${{ github.event.release.tag_name}} is published!",
+            "blocks": [
+              {
+          			"type": "divider"
+          		},
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": ""
+                }
+              },
+              {
+          			"type": "context",
+          			"elements": [
+          				{
+          					"type": "plain_text",
+          					"emoji": true,
+                    "text": ":white_check_mark: published by: "
+          				},
+          			]
+          		},
+            ]
+          }
